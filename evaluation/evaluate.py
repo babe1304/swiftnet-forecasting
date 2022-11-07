@@ -4,10 +4,60 @@ import numpy as np
 import torch
 from tqdm import tqdm
 from time import perf_counter
+import time
 
-import lib.cylib as cylib
 
 __all__ = ['compute_errors', 'get_pred', 'evaluate_semseg']
+
+
+class ConfusionMatrix():
+    def __init__(self, num_classes, ignore_label=255, class_info=None):
+        self.num_classes = num_classes
+        self.ignore_label = ignore_label
+        self.class_info = class_info
+        self.conf_matrix = np.zeros((num_classes, num_classes), dtype=np.long)
+
+    def update(self, preds, labels):
+        mask = labels != self.ignore_label
+        preds = preds[mask]
+        labels = labels[mask]
+
+        arr = preds * self.num_classes + labels
+        curr_conf_matrix = np.bincount(arr, minlength=self.num_classes**2)
+        curr_conf_matrix = curr_conf_matrix.reshape((self.num_classes, self.num_classes)).astype(np.long)
+        self.conf_matrix += curr_conf_matrix
+        return curr_conf_matrix
+
+    def get_iou(self, class_id):
+        TP = self.conf_matrix[i, i]
+        FP = np.sum(self.conf_matrix[i]) - TP
+        FN = np.sum(self.conf_matrix[:, i]) - TP
+        iou = TP / (TP + FP + FN)
+        return iou
+
+    def get_matrix(self):
+        return self.conf_matrix
+
+    def get_metrics(self, verbose=True):
+        class_iou = np.zeros(self.num_classes)
+
+        for id in range(self.num_classes):
+            TP = self.conf_matrix[id, id]
+            FP = np.sum(self.conf_matrix[id]) - TP
+            FN = np.sum(self.conf_matrix[:, id]) - TP
+            iou = TP / (TP + FP + FN)
+            class_iou[id] = iou
+            if verbose:
+                print('\t{} IoU accuracy = {:.2f} %'.format(self.class_info[id] if self.class_info is not None else id, iou * 100))
+
+        miou = np.mean(class_iou)
+        if verbose:
+            print('\tmIoU accuracy = {:.2f} %'.format(miou * 100))
+
+        return miou, class_iou
+
+    def reset(self):
+        self.conf_matrix = np.zeros_like(self.conf_matrix)
 
 
 def compute_errors(conf_mat, class_info, verbose=True):
@@ -54,10 +104,11 @@ def compute_errors(conf_mat, class_info, verbose=True):
 
 def get_pred(logits, labels, conf_mat):
     _, pred = torch.max(logits.data, dim=1)
+    print(labels.shape, logits.shape, pred.shape)
     pred = pred.byte().cpu()
     pred = pred.numpy().astype(np.int32)
     true = labels.numpy().astype(np.int32)
-    cylib.collect_confusion_matrix(pred.reshape(-1), true.reshape(-1), conf_mat)
+    # cylib.collect_confusion_matrix(pred.reshape(-1), true.reshape(-1), conf_mat)
 
 
 def mt(sync=False):
@@ -69,18 +120,35 @@ def mt(sync=False):
 def evaluate_semseg(model, data_loader, class_info, observers=()):
     model.eval()
     managers = [torch.no_grad()] + list(observers)
+    conf_matrix = ConfusionMatrix(num_classes=19, ignore_label=255, class_info=class_info)
     with contextlib.ExitStack() as stack:
         for ctx_mgr in managers:
             stack.enter_context(ctx_mgr)
-        conf_mat = np.zeros((model.num_classes, model.num_classes), dtype=np.uint64)
         for step, batch in tqdm(enumerate(data_loader), total=len(data_loader)):
             batch['original_labels'] = batch['original_labels'].numpy().astype(np.uint32)
             logits, additional = model.do_forward(batch, batch['original_labels'].shape[1:3])
             pred = torch.argmax(logits.data, dim=1).byte().cpu().numpy().astype(np.uint32)
             for o in observers:
                 o(pred, batch, additional)
-            cylib.collect_confusion_matrix(pred.flatten(), batch['original_labels'].flatten(), conf_mat)
+            
+            # trazenje neocekivanih vrijednosti
+            un_lab = np.unique(batch['original_labels'])
+            illegal_vals = un_lab[(un_lab > 19 - 1) & (un_lab < 255)]
+            if len(illegal_vals) > 0:
+                print('Error: ', un_lab)
+                per_class_iou = []
+                for n in class_info:
+                    per_class_iou += [(n, 0)]
+                return 0, per_class_iou
+                
+            #t1 = time.time()
+            conf_matrix.update(pred.flatten(), batch['original_labels'].flatten())
+            #t2 = time.time()
+            #print('Confusion matrix compute time: {:.1f} ms'.format((t2-t1)*1000))
+            #time.sleep(2)
         print('')
-        pixel_acc, iou_acc, recall, precision, _, per_class_iou = compute_errors(conf_mat, class_info, verbose=True)
+        pixel_acc, iou_acc, recall, precision, _, per_class_iou = compute_errors(conf_matrix.get_matrix(), class_info, verbose=True)
+        #print('Mine:')
+        #conf_matrix.get_metrics()
     model.train()
     return iou_acc, per_class_iou

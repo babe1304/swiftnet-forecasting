@@ -18,8 +18,9 @@ from models.util import get_n_params
 
 path = os.path.abspath(__file__)
 dir_path = os.path.dirname(path)
-#root = Path.home() / Path('datasets/Cityscapes')
-root = Path(__file__).parent.parent.absolute() / Path('datasets/Cityscapes')
+#root = Path.home() / Path('datasets/Cityscapes_win')
+root = Path('C:/Users/bubas/Data/Cityscapes')
+print(root)
 
 evaluating = False
 random_crop_size = 768
@@ -64,8 +65,8 @@ else:
          Tensor(),
          ])
 
-dataset_train = Cityscapes(root, transforms=trans_train, subset='train')
-dataset_val = Cityscapes(root, transforms=trans_val, subset='val')
+dataset_train = Cityscapes(root, transforms=trans_train, subset='train', images_dir='leftImg8bit', labels_dir='gtFine')
+dataset_val = Cityscapes(root, transforms=trans_val, subset='val', images_dir='leftImg8bit', labels_dir='gtFine')
 
 backbone = resnet18(pretrained=True,
                     pyramid_levels=num_levels,
@@ -105,7 +106,7 @@ if not evaluating:
     optimizer = optim.Adam(optim_params, betas=(0.9, 0.99))
     lr_scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, epochs, lr_min)
 
-batch_size = bs = 16
+batch_size = bs = 14
 print(f'Batch size: {bs}')
 nw = 4
 

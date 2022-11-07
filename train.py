@@ -1,5 +1,6 @@
-import argparse
 import os
+os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
+import argparse
 from pathlib import Path
 import torch
 import importlib.util
@@ -101,7 +102,7 @@ class Trainer:
                 print(self.conf.epoch)
             self.model.train()
             try:
-                self.conf.lr_scheduler.step()
+                #self.conf.lr_scheduler.step()
                 print(f'Elapsed time: {datetime.datetime.now() - self.experiment_start}')
                 for group in self.optimizer.param_groups:
                     print('LR: {:.4e}'.format(group['lr']))
@@ -114,12 +115,17 @@ class Trainer:
                 start_t = perf_counter()
                 for step, batch in batch_iterator:
                     self.optimizer.zero_grad()
+
                     loss = self.model.loss(batch)
+                    if loss is None:
+                    	continue
+                    	
                     loss.backward()
                     self.optimizer.step()
                     if step % 80 == 0 and step > 0:
                         curr_t = perf_counter()
                         print(f'{(step * self.conf.batch_size) / (curr_t - start_t):.2f}fps')
+                self.conf.lr_scheduler.step()
                 if not self.args.dry:
                     store(self.model, self.store_path, 'model')
                     store(self.optimizer, self.store_path, 'optimizer')

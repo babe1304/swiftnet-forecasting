@@ -28,9 +28,11 @@ class BoundaryAwareFocalLoss(nn.Module):
             input = input.contiguous().view(-1, input.size(2))  # N,H*W,C => N*H*W,C
         target = target.view(-1, 1)
         alphas = label_distance_alphas.view(-1)
-
+        
         logpt = F.log_softmax(input, dim=-1)
         logpt = logpt.gather(1, target)
+            
+        #logpt = logpt.gather(1, target)
         logpt = logpt.view(-1)
         pt = logpt.detach().exp()
 

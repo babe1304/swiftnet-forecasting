@@ -66,6 +66,17 @@ class SemsegModel(nn.Module):
         assert self.criterion is not None
         labels = batch['labels'].cuda()
         logits, additional = self.do_forward(batch, image_size=labels.shape[-2:])
+        
+        # trazenje neocekivanih vrijednosti
+        # torch.unique(torch.argmax(logits, dim=1))
+        un_lab = torch.unique(labels)
+        illegal_vals = un_lab[(un_lab > 18) & (un_lab < 255)]
+        if len(illegal_vals) > 0:
+        	torch.save(labels, './error_labels_' + str(int(torch.randint(low=0, high=255, size=(1,))[0])) + '.pt')
+        	print('Error: ', un_lab)
+        	print(batch['name'])
+        	return None
+        
         if self.loss_ret_additional:
             return self.criterion(logits, labels, batch=batch, additional=additional), additional
         return self.criterion(logits, labels, batch=batch, additional=additional)
