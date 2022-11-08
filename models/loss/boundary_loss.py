@@ -32,7 +32,6 @@ class BoundaryAwareFocalLoss(nn.Module):
         logpt = F.log_softmax(input, dim=-1)
         logpt = logpt.gather(1, target)
             
-        #logpt = logpt.gather(1, target)
         logpt = logpt.view(-1)
         pt = logpt.detach().exp()
 

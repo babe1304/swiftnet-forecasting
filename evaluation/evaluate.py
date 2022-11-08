@@ -136,10 +136,7 @@ def evaluate_semseg(model, data_loader, class_info, observers=()):
             illegal_vals = un_lab[(un_lab > 19 - 1) & (un_lab < 255)]
             if len(illegal_vals) > 0:
                 print('Error: ', un_lab)
-                per_class_iou = []
-                for n in class_info:
-                    per_class_iou += [(n, 0)]
-                return 0, per_class_iou
+        	labels[(labels > 19 - 1) & (labels < 255)] = 255
                 
             #t1 = time.time()
             conf_matrix.update(pred.flatten(), batch['original_labels'].flatten())
