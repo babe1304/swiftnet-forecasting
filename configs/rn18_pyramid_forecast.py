@@ -8,10 +8,10 @@ import os
 import numpy as np
 
 from models.semseg import SemsegModel
-from models.resnet.resnet_pyramid import *
+from models.resnet.resnet_pyramid_forecast import *
 from models.loss import BoundaryAwareFocalLoss, SemsegCrossEntropy
 from data.transform import *
-from data.cityscapes import Cityscapes
+from data.cityscapes import Cityscapes, CityscapesSequence, CityscapesFeatureSequence
 from evaluation import StorePreds
 
 from models.util import get_n_params
@@ -21,7 +21,7 @@ dir_path = os.path.dirname(path)
 #root = Path.home() / Path('datasets/Cityscapes')
 root = Path(__file__).parent.parent.absolute() / Path('datasets/Cityscapes')
 
-evaluating = False
+evaluating = True
 random_crop_size = 768
 
 scale = 1
@@ -34,7 +34,7 @@ ignore_id = 255
 class_info = Cityscapes.class_info
 color_info = Cityscapes.color_info
 
-num_levels = 3
+num_levels = 2
 ostride = 4
 target_size_crops = (random_crop_size, random_crop_size)
 target_size_crops_feats = (random_crop_size // ostride, random_crop_size // ostride)
@@ -60,13 +60,27 @@ else:
          RandomFlip(),
          RandomSquareCropAndScale(random_crop_size, ignore_id=ignore_id, mean=mean_rgb),
          SetTargetSize(target_size=target_size_crops, target_size_feats=target_size_crops_feats),
-         #LabelDistanceTransform(num_classes=num_classes, reduce=True, bins=dist_trans_bins, alphas=dist_trans_alphas, ignore_id=ignore_id),
+         LabelDistanceTransform(num_classes=num_classes, reduce=True, bins=dist_trans_bins, alphas=dist_trans_alphas, ignore_id=ignore_id),
          Tensor(),
          ])
 
 dataset_train = Cityscapes(root, transforms=trans_train, subset='train')
 dataset_val = Cityscapes(root, transforms=trans_val, subset='val')
+'''
+dataset_train = CityscapesSequence('/home/jakov/1TB_NVMe/Users/bubas/Data/Cityscapes/leftImg8bit_sequence/train',
+                                '/home/jakov/1TB_NVMe/Users/bubas/Data/Cityscapes/gtFine/train',
+                                transforms=trans_val, delta=0, subset='train')
+dataset_val = CityscapesSequence('/home/jakov/1TB_NVMe/Users/bubas/Data/Cityscapes/leftImg8bit_sequence/val',
+                                '/home/jakov/1TB_NVMe/Users/bubas/Data/Cityscapes/gtFine/val',
+                                transforms=trans_val, delta=0, subset='val')
 
+dataset_train = CityscapesFeatureSequence('/home/jakov/1TB_NVMe/Users/bubas/Data/Cityscapes/leftImg8bit_sequence/train',
+                                        '/home/jakov/1TB_NVMe/Users/bubas/Data/Cityscapes/features_pyr_forecast/train',
+                                        subset='train')
+dataset_val = CityscapesFeatureSequence('/home/jakov/1TB_NVMe/Users/bubas/Data/Cityscapes/leftImg8bit_sequence/val',
+                                        '/home/jakov/1TB_NVMe/Users/bubas/Data/Cityscapes/features_pyr_forecast/val',
+                                        delta=0, subset='val')
+'''
 backbone = resnet18(pretrained=True,
                     pyramid_levels=num_levels,
                     k_upsample=3,
@@ -75,13 +89,14 @@ backbone = resnet18(pretrained=True,
                     std=std,
                     k_bneck=1,
                     output_stride=ostride,
-                    efficient=True)
+                    efficient=True,
+                    target_size=(1024, 2048) if evaluating else (random_crop_size, random_crop_size))
 model = SemsegModel(backbone, num_classes, k=1, bias=True)
 if evaluating:
-    model.load_state_dict(torch.load('weights/rn18_pyramid/model_best.pt'), strict=False)
+    model.load_state_dict(torch.load('weights/rn18_pyramid/forecast/boundary/72-60_rn18_pyramid_forecast/stored/model_best.pt'), strict=False)
 else:
-    #model.criterion = BoundaryAwareFocalLoss(gamma=.5, num_classes=num_classes, ignore_id=ignore_id)
-    model.criterion = SemsegCrossEntropy(num_classes=num_classes, ignore_id=ignore_id)
+    model.criterion = BoundaryAwareFocalLoss(gamma=.5, num_classes=num_classes, ignore_id=ignore_id)
+    #model.criterion = SemsegCrossEntropy(num_classes=num_classes, ignore_id=ignore_id)
 
 bn_count = 0
 for m in model.modules():
@@ -94,7 +109,7 @@ if not evaluating:
     lr_min = 1e-6
     fine_tune_factor = 4
     weight_decay = 1e-4
-    epochs = 100
+    epochs = 250
 
     optim_params = [
         {'params': model.random_init_params(), 'lr': lr, 'weight_decay': weight_decay},
@@ -114,7 +129,7 @@ if evaluating:
     loader_train = DataLoader(dataset_train, batch_size=1, collate_fn=custom_collate, num_workers=nw)
 else:
     loader_train = DataLoader(dataset_train, batch_size=batch_size, num_workers=nw, pin_memory=False,
-                              drop_last=True, collate_fn=custom_collate, shuffle=True, 
+                              drop_last=True, collate_fn=custom_collate, shuffle=True,
                               prefetch_factor=2, persistent_workers=True)
 
 total_params = get_n_params(model.parameters())
@@ -132,8 +147,8 @@ if evaluating:
 
     # stvara greske u transform/labels.py
     eval_observers = []
-    '''
     to_color = ColorizeLabels(color_info)
+    '''
     to_image = Compose([Numpy(), to_color])
     eval_observers = [StorePreds(store_dir, to_image, to_color)]
     '''

@@ -1,5 +1,4 @@
 import os
-os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 import argparse
 from pathlib import Path
 import torch
@@ -119,7 +118,7 @@ class Trainer:
                     loss = self.model.loss(batch)
                     if loss is None:
                     	continue
-                    	
+
                     loss.backward()
                     self.optimizer.step()
                     if step % 80 == 0 and step > 0:

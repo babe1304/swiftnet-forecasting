@@ -29,11 +29,19 @@ class ConfusionMatrix():
         return curr_conf_matrix
 
     def get_iou(self, class_id):
-        TP = self.conf_matrix[i, i]
-        FP = np.sum(self.conf_matrix[i]) - TP
-        FN = np.sum(self.conf_matrix[:, i]) - TP
+        TP = self.conf_matrix[class_id, class_id]
+        FP = np.sum(self.conf_matrix[class_id]) - TP
+        FN = np.sum(self.conf_matrix[:, class_id]) - TP
         iou = TP / (TP + FP + FN)
         return iou
+        
+    def get_subset_miou(self, class_ids):
+        index = 0
+        iou_lst = []
+        for id in class_ids:
+            iou_lst.append(self.get_iou(id))
+            index += 1
+        return sum(iou_lst) / index
 
     def get_matrix(self):
         return self.conf_matrix
@@ -130,14 +138,7 @@ def evaluate_semseg(model, data_loader, class_info, observers=()):
             pred = torch.argmax(logits.data, dim=1).byte().cpu().numpy().astype(np.uint32)
             for o in observers:
                 o(pred, batch, additional)
-            
-            # trazenje neocekivanih vrijednosti
-            un_lab = np.unique(batch['original_labels'])
-            illegal_vals = un_lab[(un_lab > 19 - 1) & (un_lab < 255)]
-            if len(illegal_vals) > 0:
-                print('Error: ', un_lab)
-        	labels[(labels > 19 - 1) & (labels < 255)] = 255
-                
+
             #t1 = time.time()
             conf_matrix.update(pred.flatten(), batch['original_labels'].flatten())
             #t2 = time.time()

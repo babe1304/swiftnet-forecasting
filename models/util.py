@@ -90,11 +90,15 @@ class _UpsampleBlend(nn.Module):
             self.upsampling_method = lambda x, size: F.interpolate(x, mode='nearest', size=fixed_size)
             warnings.warn(f'Fixed upsample size', UserWarning)
 
-    def forward(self, x, skip):
+    def forward(self, x, skip=None, up_size=None):
         if self.detach_skip:
             warnings.warn(f'Detaching skip connection {skip.shape[2:4]}', UserWarning)
             skip = skip.detach()
-        skip_size = skip.size()[-2:]
+        skip_size = None
+        if up_size is not None:
+            skip_size = up_size
+        if skip is not None:
+            skip_size = skip.size()[-2:]
         x = self.upsampling_method(x, skip_size)
         if self.use_skip:
             x = x + skip

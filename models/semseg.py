@@ -62,20 +62,23 @@ class SemsegModel(nn.Module):
         additional = {**additional, **data}
         return logits, additional
 
+    def forward_encoder(self, batch, image_size=None):
+        data = self.prepare_data(batch, image_size)
+        features, additional = self.backbone.forward_encoder(data['image'])
+        return features, additional
+
+    def forward_decoder_no_skip(self, features, image_size):
+        features = self.backbone.forward_decoder_no_skip(features)
+        logits = self.logits.forward(features)
+        if (not self.training) or self.upsample_logits:
+            logits = upsample(logits, image_size)
+        return logits
+
     def loss(self, batch):
         assert self.criterion is not None
         labels = batch['labels'].cuda()
         logits, additional = self.do_forward(batch, image_size=labels.shape[-2:])
-        
-        # trazenje neocekivanih vrijednosti
-        ignore_id = 255
-        un_lab = torch.unique(labels)
-        illegal_vals = un_lab[(un_lab > self.num_classes - 1) & (un_lab < ignore_id)]
-        if len(illegal_vals) > 0:
-        	print('Error: ', un_lab)
-        	print(batch['name'])
-        	labels[(labels > self.num_classes - 1) & (labels < ignore_id)] = ignore_id
-        
+
         if self.loss_ret_additional:
             return self.criterion(logits, labels, batch=batch, additional=additional), additional
         return self.criterion(logits, labels, batch=batch, additional=additional)
