@@ -23,6 +23,8 @@ root = Path(__file__).parent.parent.absolute() / Path('datasets/Cityscapes')
 
 evaluating = True
 random_crop_size = 768
+num_levels = 2
+forecast_after_up_block = 1
 
 scale = 1
 mean = [73.15, 82.90, 72.3]
@@ -34,7 +36,6 @@ ignore_id = 255
 class_info = Cityscapes.class_info
 color_info = Cityscapes.color_info
 
-num_levels = 2
 ostride = 4
 target_size_crops = (random_crop_size, random_crop_size)
 target_size_crops_feats = (random_crop_size // ostride, random_crop_size // ostride)
@@ -66,20 +67,27 @@ else:
 
 dataset_train = Cityscapes(root, transforms=trans_train, subset='train')
 dataset_val = Cityscapes(root, transforms=trans_val, subset='val')
+
 '''
-dataset_train = CityscapesSequence('/home/jakov/1TB_NVMe/Users/bubas/Data/Cityscapes/leftImg8bit_sequence/train',
-                                '/home/jakov/1TB_NVMe/Users/bubas/Data/Cityscapes/gtFine/train',
+dataset_train = CityscapesSequence('/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/leftImg8bit_sequence/train',
+                                '/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/gtFine/train',
                                 transforms=trans_val, delta=0, subset='train')
-dataset_val = CityscapesSequence('/home/jakov/1TB_NVMe/Users/bubas/Data/Cityscapes/leftImg8bit_sequence/val',
-                                '/home/jakov/1TB_NVMe/Users/bubas/Data/Cityscapes/gtFine/val',
+dataset_val = CityscapesSequence('/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/leftImg8bit_sequence/val',
+                                '/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/gtFine/val',
                                 transforms=trans_val, delta=0, subset='val')
 
-dataset_train = CityscapesFeatureSequence('/home/jakov/1TB_NVMe/Users/bubas/Data/Cityscapes/leftImg8bit_sequence/train',
-                                        '/home/jakov/1TB_NVMe/Users/bubas/Data/Cityscapes/features_pyr_forecast/train',
-                                        subset='train')
-dataset_val = CityscapesFeatureSequence('/home/jakov/1TB_NVMe/Users/bubas/Data/Cityscapes/leftImg8bit_sequence/val',
-                                        '/home/jakov/1TB_NVMe/Users/bubas/Data/Cityscapes/features_pyr_forecast/val',
-                                        delta=0, subset='val')
+dataset_train = CityscapesFeatureSequence('/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/features/2_levels/1_skip_32x64/train',
+                                        # '/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/features/2_levels/2_skips_64x128/train',
+                                          # '/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/features/3_levels/2_skips_32x64/train',
+                                          # '/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/features/3_levels/3_skips_64x128/train',
+                                        '/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/gtFine/train',
+                                        delta=9, subset='train')
+dataset_val = CityscapesFeatureSequence('/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/features/2_levels/1_skip_32x64/val',
+                                        # '/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/features/2_levels/2_skips_64x128/val',
+                                        # '/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/features/3_levels/2_skips_32x64/val',
+                                        # '/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/features/3_levels/3_skips_64x128/val',
+                                        '/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/gtFine/val',
+                                        delta=9, subset='val')
 '''
 backbone = resnet18(pretrained=True,
                     pyramid_levels=num_levels,
@@ -90,10 +98,14 @@ backbone = resnet18(pretrained=True,
                     k_bneck=1,
                     output_stride=ostride,
                     efficient=True,
-                    target_size=(1024, 2048) if evaluating else (random_crop_size, random_crop_size))
+                    forecast_after_up_block=forecast_after_up_block)
 model = SemsegModel(backbone, num_classes, k=1, bias=True)
 if evaluating:
+    # model.load_state_dict(torch.load('weights/rn18_pyramid/test/2_levels/73-66_rn18_pyramid_forecast_2_skips/stored/model_best.pt'), strict=False)
+    # model.load_state_dict(torch.load('weights/rn18_pyramid/test/3_levels/74-06_rn18_pyramid_forecast_2_skips/stored/model_best.pt'), strict=False)
+    # model.load_state_dict(torch.load('weights/rn18_pyramid/test/3_levels/75-95_rn18_pyramid_forecast_3_skips/stored/model_best.pt'), strict=False)
     model.load_state_dict(torch.load('weights/rn18_pyramid/forecast/boundary/72-60_rn18_pyramid_forecast/stored/model_best.pt'), strict=False)
+
 else:
     model.criterion = BoundaryAwareFocalLoss(gamma=.5, num_classes=num_classes, ignore_id=ignore_id)
     #model.criterion = SemsegCrossEntropy(num_classes=num_classes, ignore_id=ignore_id)
@@ -122,7 +134,7 @@ if not evaluating:
 
 batch_size = bs = 16
 print(f'Batch size: {bs}')
-nw = 4
+nw = 2
 
 loader_val = DataLoader(dataset_val, batch_size=1, collate_fn=custom_collate, num_workers=nw, persistent_workers=True)
 if evaluating:

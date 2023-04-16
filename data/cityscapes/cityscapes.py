@@ -165,7 +165,7 @@ class CityscapesFeatureSequence(Dataset):
 			tmp = gt_file[:pos]
 			pos1 = tmp.rfind('/')
 			pos2 = tmp.rfind('_')
-			seq = tmp[pos1 : pos2 + 1]
+			seq = tmp[pos1 + 1: pos2 + 1]
 			index = int(tmp[pos2 + 1: ])
 
 			d = {'gt': [gt_file]}

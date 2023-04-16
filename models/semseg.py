@@ -24,13 +24,16 @@ class SemsegModel(nn.Module):
         self.upsample_logits = upsample_logits
         self.multiscale_factors = multiscale_factors
 
-    def forward(self, image, target_size, image_size):
-        features, additional = self.backbone(image)
-        logits = self.logits.forward(features)
-        if (not self.training) or self.upsample_logits:
-            logits = upsample(logits, image_size)
-        if hasattr(self, 'border_logits'):
-            additional['border_logits'] = self.border_logits(features).sigmoid()
+    def forward(self, image, target_size, image_size, split=False):
+        if split:
+            logits, additional = self.forward_split(image)
+        else:
+            features, additional = self.backbone(image)
+            logits = self.logits.forward(features)
+            if (not self.training) or self.upsample_logits:
+                logits = upsample(logits, image_size)
+            if hasattr(self, 'border_logits'):
+                additional['border_logits'] = self.border_logits(features).sigmoid()
         additional['logits'] = logits
         return logits, additional
 
@@ -65,6 +68,7 @@ class SemsegModel(nn.Module):
     def forward_encoder(self, batch, image_size=None):
         data = self.prepare_data(batch, image_size)
         features, additional = self.backbone.forward_encoder(data['image'])
+        additional = {**additional, **data}
         return features, additional
 
     def forward_decoder_no_skip(self, features, image_size):
@@ -74,10 +78,29 @@ class SemsegModel(nn.Module):
             logits = upsample(logits, image_size)
         return logits
 
-    def loss(self, batch):
+    def forward_split(self, batch, image_size=None):
+        img_size = batch['labels'].shape[-2:] if image_size is None else image_size
+        '''
+        h, w = image_size
+        if h == self.backbone.target_size[0] and w == self.backbone.target_size[1]:
+            target_sizes = None
+        else:
+            target_sizes = [(h // 2 ** i, w // 2 ** i) for i in range(2, 2 + self.backbone.num_pyr_modules)][::-1]
+        '''
+
+        features, additional = self.forward_encoder(batch, image_size=img_size)
+        logits = self.forward_decoder_no_skip(features, image_size=img_size)
+
+        additional['model'] = self
+        return logits, additional
+
+    def loss(self, batch, split=False):
         assert self.criterion is not None
         labels = batch['labels'].cuda()
-        logits, additional = self.do_forward(batch, image_size=labels.shape[-2:])
+        if split:
+            logits, additional = self.forward_split(batch, image_size=labels.shape[-2:])
+        else:
+            logits, additional = self.do_forward(batch, image_size=labels.shape[-2:])
 
         if self.loss_ret_additional:
             return self.criterion(logits, labels, batch=batch, additional=additional), additional

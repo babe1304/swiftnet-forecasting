@@ -26,26 +26,28 @@ if __name__ == '__main__':
 
     save_dir = '/home/jakov/1TB_NVMe/Users/bubas/Data/Cityscapes/features_pyr_forecast'
 
-    model = conf.model.cuda()
+    model = conf.model#.cuda()
     model.eval()
 
     with torch.no_grad():
         for loader, name in conf.eval_loaders:
             for step, batch in tqdm(enumerate(loader), total=len(loader)):
 
-                batch['image'] = batch['image']#.squeeze()
-                batch['original_labels'] = batch['original_labels'].numpy().astype(np.uint32)
-                img_size = batch['original_labels'].shape[1:3]
+                past_feats, target_feats, sem_seg_gt = batch
+
+                # batch['image'] = batch['image']#.squeeze()
+                # batch['original_labels'] = batch['original_labels'].numpy().astype(np.uint32)
+                # img_size = batch['original_labels'].shape[1:3]
                 #print(img_size)
                 #print(batch['image'].shape)
                 #print(batch['name'])
 
-                features, additional = model.forward_encoder(batch, img_size)
+                # features, additional = model.forward_encoder(target_feats)
 
                 #print(batch['name'])
                 #print(features.shape)
 
-                logits = model.forward_decoder_no_skip(features, img_size)
+                logits = model.forward_decoder_no_skip(target_feats, (1024, 2048))
                 pred = torch.argmax(logits.data, dim=1).byte().cpu().numpy().astype(np.uint32)
 
                 rgb_preds = conf.to_color(pred).squeeze()

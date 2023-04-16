@@ -101,7 +101,7 @@ class Trainer:
                 print(self.conf.epoch)
             self.model.train()
             try:
-                #self.conf.lr_scheduler.step()
+                # self.conf.lr_scheduler.step()
                 print(f'Elapsed time: {datetime.datetime.now() - self.experiment_start}')
                 for group in self.optimizer.param_groups:
                     print('LR: {:.4e}'.format(group['lr']))
@@ -115,9 +115,9 @@ class Trainer:
                 for step, batch in batch_iterator:
                     self.optimizer.zero_grad()
 
-                    loss = self.model.loss(batch)
+                    loss = self.model.loss(batch, split=True)
                     if loss is None:
-                    	continue
+                        continue
 
                     loss.backward()
                     self.optimizer.step()
@@ -130,11 +130,11 @@ class Trainer:
                     store(self.optimizer, self.store_path, 'optimizer')
                 if eval_epoch and self.args.eval:
                     print('Evaluating model')
-                    iou, per_class_iou = evaluate_semseg(self.model, self.loader_val, self.dataset_val.class_info)
+                    iou, per_class_iou = evaluate_semseg(self.model, self.loader_val, self.dataset_val.class_info, split=True)
                     self.validation_ious += [iou]
                     if self.args.eval_train:
                         print('Evaluating train')
-                        evaluate_semseg(self.model, self.loader_train, self.dataset_train.class_info)
+                        evaluate_semseg(self.model, self.loader_train, self.dataset_train.class_info, split=True)
                     if iou > self.best_iou:
                         self.best_iou = iou
                         self.best_iou_epoch = epoch

@@ -7,7 +7,7 @@ import torch.utils.checkpoint as cp
 from collections import defaultdict
 from math import log2
 
-from ..util import _UpsampleBlend
+from ..util import _UpsampleBlend, SpatialPyramidPooling, SeparableConv2d
 
 __all__ = ['ResNet', 'resnet18', 'resnet34', 'BasicBlock']
 
@@ -113,7 +113,8 @@ class ResNet(nn.Module):
                             levels=self.pyramid_levels))
         self.inplanes = planes * block.expansion
         for i in range(1, blocks):
-            layers.append(block(self.inplanes, planes, bn_class=bn_class, levels=self.pyramid_levels, efficient=self.efficient))
+            layers.append(
+                block(self.inplanes, planes, bn_class=bn_class, levels=self.pyramid_levels, efficient=self.efficient))
 
         return nn.Sequential(*layers)
 
@@ -121,7 +122,7 @@ class ResNet(nn.Module):
                  efficient=False, upsample_skip=True, mean=(73.1584, 82.9090, 72.3924),
                  std=(44.9149, 46.1529, 45.3192), scale=1, detach_upsample_skips=(), detach_upsample_in=False,
                  align_corners=None, pyramid_subsample='bicubic', target_size=None,
-                 output_stride=4, **kwargs):
+                 output_stride=4, forecast_after_up_block=1, **kwargs):
         self.inplanes = 64
         self.efficient = efficient
         super(ResNet, self).__init__()
@@ -138,6 +139,7 @@ class ResNet(nn.Module):
 
         self.align_corners = align_corners
         self.pyramid_subsample = pyramid_subsample
+        self.forecast_after_up_block = forecast_after_up_block
 
         self.bn1 = nn.ModuleList([bn_class(64) for _ in range(pyramid_levels)])
         self.relu = nn.ReLU(inplace=True)
@@ -152,32 +154,58 @@ class ResNet(nn.Module):
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2, bn_class=bn_class)
         bottlenecks += [convkxk(self.inplanes, num_features, k=k_bneck)]
 
+        # self.use_spp = use_spp
+        # if use_spp:
+        #     spp_grids = (8, 4, 2, 1)
+        #     spp_square_grid = False
+        #     spp_drop_rate = 0.0
+        #     num_levels = 3
+        #     bt_size = num_features
+        #     level_size = bt_size // num_levels
+        #     self.spp = SpatialPyramidPooling(self.inplanes, num_levels, bt_size=bt_size, level_size=level_size,
+        #                                      out_size=num_features, grids=spp_grids, square_grid=spp_square_grid,
+        #                                      bn_momentum=0.01 / 2, use_bn=use_bn, drop_rate=spp_drop_rate)
+
         num_bn_remove = max(0, int(log2(output_stride) - 2))
         self.num_skip_levels = self.pyramid_levels + 3 - num_bn_remove
         bottlenecks = bottlenecks[num_bn_remove:]
 
+        # remove unused bottlenecks
+        self.num_bottlenecks = min(len(bottlenecks), self.forecast_after_up_block + 1)
+        for i in range(len(bottlenecks) - self.num_bottlenecks):
+            bottlenecks[i] = nn.Identity()
+
         self.fine_tune = [self.conv1, self.maxpool, self.layer1, self.layer2, self.layer3, self.layer4, self.bn1]
 
         self.upsample_bottlenecks = nn.ModuleList(bottlenecks[::-1])
-        num_pyr_modules = 2 + pyramid_levels - num_bn_remove
+        self.num_pyr_modules = 2 + pyramid_levels - num_bn_remove
         self.target_size = target_size
         if self.target_size is not None:
             h, w = target_size
-            self.target_sizes = [(h // 2 ** i, w // 2 ** i) for i in range(2, 2 + num_pyr_modules)][::-1]
+            self.target_sizes = [(h // 2 ** i, w // 2 ** i) for i in range(2, 2 + self.num_pyr_modules)][::-1]
         else:
-            self.target_sizes = [None] * num_pyr_modules
-	
+            self.target_sizes = [None] * self.num_pyr_modules
+
         self.upsample_blends = nn.ModuleList(
             [_UpsampleBlend(num_features,
                             use_bn=use_bn,
-                            use_skip=True if i == 0 else False,
+                            use_skip=i < self.forecast_after_up_block,
                             detach_skip=i in detach_upsample_skips,
-                            fixed_size=None, #None if i == 0 else ts,
+                            fixed_size=None,  # None if i == 0 else ts,
                             k=k_upsample)
              for i, ts in enumerate(self.target_sizes)])
-        #print(self.upsample_blends)
-        #print(list(enumerate(self.target_sizes)))
-        #print(num_pyr_modules-1)
+        # print(self.upsample_blends)
+        # print(list(enumerate(self.target_sizes)))
+        # print(num_pyr_modules-1)
+
+        print('len(bottlenecks):' + str(len(bottlenecks)))
+        print('pyramid_levels:' + str(self.pyramid_levels))
+        print('num_pyr_modules:' + str(self.num_pyr_modules))
+        print('forecast_after_up_block:' + str(self.forecast_after_up_block))
+        print('num_skip_levels:' + str(self.num_skip_levels))
+        print('num_bottlenecks:' + str(self.num_bottlenecks))
+        print(bottlenecks)
+        print()
 
         self.detach_upsample_in = detach_upsample_in
 
@@ -252,8 +280,11 @@ class ResNet(nn.Module):
         x = skips[0][0]
         if self.detach_upsample_in:
             x = x.detach()
+        # if self.use_spp:
+        #     x = self.spp.forward(x)
         for i, (sk, blend) in enumerate(zip(skips[1:], self.upsample_blends)):
             x = blend(x, sum(sk), up_size=self.target_sizes[i])
+            # print(i, sum(sk).shape, x.shape, self.target_sizes[i])
         return x, additional
 
     def forward_encoder(self, image):
@@ -263,6 +294,10 @@ class ResNet(nn.Module):
             image -= self.img_mean
             image /= self.img_std
         pyramid = [image]
+
+        h, w = image.shape[-2:]
+        self.target_sizes = [(h // 2 ** i, w // 2 ** i) for i in range(2, 2 + self.num_pyr_modules)][::-1]
+
         for l in range(1, self.pyramid_levels):
             if self.target_size is not None:
                 ts = list([si // 2 ** l for si in self.target_size])
@@ -276,18 +311,39 @@ class ResNet(nn.Module):
         for idx, p in enumerate(pyramid):
             skips = self.forward_down(p, skips, idx=idx)
         skips = skips[::-1]
+
+        # remove unused skips
+        for _ in range(len(skips) - self.forecast_after_up_block - 1):
+            skips.pop()
+
         x = skips[0][0]
         if self.detach_upsample_in:
             x = x.detach()
 
-        x = self.upsample_blends[0](x, sum(skips[1]), up_size=self.target_sizes[0])
-        additional['skips'] = skips
+        # if self.use_spp:
+        #     x = self.spp.forward(x)
+
+        for i, (sk, blend) in enumerate(
+                zip(skips[1:self.forecast_after_up_block + 1], self.upsample_blends[:self.forecast_after_up_block])):
+            # print(i, sk[0].shape, x.shape, target_sizes[i])
+            # print([s.shape for s in sk])
+
+            x = blend(x, sum(sk), up_size=self.target_sizes[i])
+
+        # x = self.upsample_blends[0](x, sum(skips[1]), up_size=self.target_sizes[0])
+        # additional['skips'] = skips
         return x, additional
 
     def forward_decoder_no_skip(self, features):
         x = features
-        for i, blend in enumerate(self.upsample_blends[1:]):
-            x = blend(x, None, up_size=self.target_sizes[i+1])
+        h, w = features.shape[-2:]
+        target_sizes = [(h * 2 ** i, w * 2 ** i) for i in
+                        range(1, 1 + self.num_pyr_modules - self.forecast_after_up_block)]
+
+        for i, blend in enumerate(self.upsample_blends[self.forecast_after_up_block:]):
+            x = blend(x, None, up_size=target_sizes[i])
+            # print(i, x.shape, self.target_sizes[i + self.forecast_after_up_block])
+            # print(torch.cuda.memory_allocated(0) / 2**30)
         return x
 
     def _load_from_state_dict(self, state_dict, prefix, local_metadata, strict,
