@@ -25,11 +25,11 @@ moving_IDs = range(11, 18 + 1)
 timestep = 9
 f2f_levels = 8
 
-forecast_after_up_block = 3
+forecast_after_up_block = 2
 pyramid_levels = 3
 
 begin_time = time.strftime("%H_%M_%d_%m_%Y", time.localtime())
-custom_desc = '64x32_channels_count_middle'#'_128x64_first_3x3_rest_5x5'
+custom_desc = '_64x32_normalized_delete'#'_128x64_first_3x3_rest_5x5'
 current_dir = 'F2F-' + str(f2f_levels) + custom_desc + '_t' + str(timestep) + '_' + begin_time
 
 # SAVE_DIR = '/home/jakov/Desktop/swiftnet-forecasting/weights/F2F/DeformF2F-' + str(f2f_levels) + '/current/'
@@ -37,14 +37,17 @@ SAVE_DIR = '/home/jakov/Desktop/swiftnet-forecasting/weights/test/' + str(pyrami
 os.mkdir(SAVE_DIR)
 print('Saving in: ' + SAVE_DIR)
 
-# mean = torch.tensor(
-#     np.load('/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/features_pyr_forecast_2_skips/mean.npy'),
-#     device=device)
-# std = torch.tensor(
-#     np.load('/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/features_pyr_forecast_2_skips/std.npy'),
-#     device=device)
+mean, std = None, None
+mean = torch.tensor(
+    np.load('/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/features/3_levels/2_skips_32x64/mean.npy'),
+    device=device)
+std = torch.tensor(
+    np.load('/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/features/3_levels/2_skips_32x64/std.npy'),
+    device=device)
+do_normalization = mean is not None and std is not None
 
-f2f_model = DeformF2F_N(N=f2f_levels, in_channels=512, out_channels=128, mean=None, std=None, split_input_dconv=False)
+f2f_model = DeformF2F_N(N=f2f_levels, in_channels=512, out_channels=128, mean=mean, std=std, split_input_dconv=False)
+# f2f_model = DeformF2F_N_corr(N=f2f_levels, in_channels=512, out_channels=128, mean=None, std=None)
 
 backbone = resnet18(pretrained=True,
                     pyramid_levels=pyramid_levels,
@@ -63,19 +66,19 @@ semseg_model.load_state_dict(
     torch.load('weights/rn18_pyramid/test/3_levels/74-06_rn18_pyramid_forecast_2_skips/stored/model_best.pt'), strict=False)
     # torch.load('weights/rn18_pyramid/test/3_levels/75-95_rn18_pyramid_forecast_3_skips/stored/model_best.pt'), strict=False)
 
+print('Normalize:' + str(do_normalization))
+
+f2f_model.to(device)
+semseg_model.to(device)
+# print(model)
+f2f_model.train()
+# semseg_model.train()
+
 # Hyperparameters
-learning_rate1 = 1e-3
-learning_rate2 = 1e-4
-
+initial_learning_rate1 = 5e-4
 batch_size = 12
-
 num_epochs = 160
-num_epochs2 = 5
-
-
-# optimizer = torch.optim.Adam(f2f_model.parameters(), lr=learning_rate1)
-# optimizer1 = torch.optim.Adam(list(f2f_model.parameters()) + list(segm_model.parameters()), lr=learning_rate1)
-# optimizer2 = torch.optim.SGD(list(f2f_model.parameters()) + list(segm_model.parameters()), lr=learning_rate2)
+# num_epochs2 = 5
 
 
 class SemsegCrossEntropy(nn.Module):
@@ -104,9 +107,7 @@ def evaluate(f2f_model, segm_model, loader):
     f2f_model.eval()
     segm_model.eval()
 
-    loss_fn_l2 = torch.nn.MSELoss()
     loss_fn_ce = SemsegCrossEntropy(ignore_id=255)
-
     conf_matrix = ConfusionMatrix(num_classes=19, ignore_label=255)
 
     loss_l2 = []
@@ -121,10 +122,9 @@ def evaluate(f2f_model, segm_model, loader):
                 target_feats = target_feats.to(device)
                 sem_seg_gt = sem_seg_gt.to(device)
 
-                pred_feats = f2f_model(past_feats)
-                # pred_feats = f2f_model.unnormalize(pred_feats)
+                pred_feats, normalized_pred = f2f_model.forward(past_feats, additional=True)
 
-                loss = loss_fn_l2(pred_feats, target_feats)
+                loss = f2f_model.loss(normalized_pred, target_feats)
                 loss_l2.append(loss.cpu().item())
 
                 logits = segm_model.forward_decoder_no_skip(pred_feats, image_size=sem_seg_gt.shape[-2:])
@@ -165,10 +165,10 @@ if __name__ == '__main__':
         '/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/gtFine/val',
         delta=timestep, subset='val')
 
-    train_loader = DataLoader(dataset_train, batch_size=batch_size, shuffle=True, collate_fn=None, num_workers=2,
+    train_loader = DataLoader(dataset_train, batch_size=batch_size, shuffle=True, collate_fn=None, num_workers=4,
                               persistent_workers=True, prefetch_factor=2)
-    val_loader = DataLoader(dataset_val, batch_size=1, shuffle=False, collate_fn=None, num_workers=2,
-                            persistent_workers=True, prefetch_factor=4)
+    val_loader = DataLoader(dataset_val, batch_size=1, shuffle=False, collate_fn=None, num_workers=4,
+                            persistent_workers=True, prefetch_factor=8)
 
     metrics_dict = {
         'val_miou': [],
@@ -181,26 +181,11 @@ if __name__ == '__main__':
         'train_ce': []
     }
 
-    # input_features = 128
-    # num_classes = 19
-    # output_features_res = (128, 256)
-    # output_preds_res = (512, 1024)
-    # mean = torch.tensor(np.load("../cityscapes_halfres_features_r18/mean.npy"), requires_grad=False, device=device).view(1, input_features, 1, 1)
-    # std = torch.tensor(np.load("../cityscapes_halfres_features_r18/std.npy"), requires_grad=False, device=device).view(1, input_features, 1, 1)
+    optimizer = torch.optim.Adam(f2f_model.parameters(), lr=initial_learning_rate1)
+    # optimizer = torch.optim.Adam(list(model.parameters()) + list(semseg_model.parameters()), lr=learning_rate1)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=len(train_loader), eta_min=1e-7)
 
-    # f2f_model.load_state_dict(torch.load("./f2f_model.pth", map_location = device))
-    f2f_model.to(device)
-    semseg_model.to(device)
-    # print(f2f_model)
-    f2f_model.train()
-    # semseg_model.train()
-
-    loss_fn_l2 = torch.nn.MSELoss()
     loss_fn_ce = SemsegCrossEntropy(ignore_id=255)
-    optimizer = torch.optim.Adam(f2f_model.parameters(), lr=5e-4)
-    # optimizer = torch.optim.Adam(list(f2f_model.parameters()) + list(semseg_model.parameters()), lr=learning_rate1)
-    # scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.98)
-
     conf_matrix = ConfusionMatrix(num_classes=19, ignore_label=255)
 
     max_val_miou = 0
@@ -218,17 +203,14 @@ if __name__ == '__main__':
                 past_feats, target_feats, sem_seg_gt = batch
                 past_feats = past_feats.to(device)
                 target_feats = target_feats.to(device)
-                # target_feats_normalized = f2f_model.normalize(target_feats)
                 # sem_seg_gt = sem_seg_gt.to(device)
                 # print(past_feats.shape, target_feats.shape)
 
                 optimizer.zero_grad()
 
-                pred_feats = f2f_model(past_feats)
+                pred_feats, normalized_pred = f2f_model.forward(past_feats, additional=True)
 
-                loss = loss_fn_l2(pred_feats, target_feats)
-                # loss = loss_fn_l2(pred_feats, target_feats_normalized)
-
+                loss = f2f_model.loss(normalized_pred, target_feats)
                 loss_l2.append(loss.cpu().item())
 
                 # logits = semseg_model.forward_decoder_no_skip(pred_feats, image_size=sem_seg_gt.shape[1:])
@@ -241,6 +223,7 @@ if __name__ == '__main__':
 
                 loss.backward()
                 optimizer.step()
+                # scheduler.step()
 
         # scheduler.step()
 

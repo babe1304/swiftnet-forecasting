@@ -178,12 +178,11 @@ class F2MF(torch.nn.Module):
 
         print(self.correlation, self.fusion, self.shared_dconv, self.f2m_head, self.f2f_head, self.weight_head)
 
-    def forward(self, input):
+    def forward(self, input, additional_dict=False):
         if self.do_normalization:
             input = normalize_concatenated(input, self.mean, self.std)
 
         B, C, H, W = input.shape
-        additional = dict()
 
         fused = self.fusion(input)
         corr = self.correlation(input)
@@ -193,29 +192,42 @@ class F2MF(torch.nn.Module):
 
         flow = self.f2m_head(x)
         predicted = self.f2f_head(x)
-        additional['predicted'] = predicted
         weights = self.weight_head(x)
-        additional['weights'] = weights
         probs = F.softmax(weights, dim=1)
 
         warped = warp(input.reshape(B * 4, self.out_channels, H, W), flow.reshape(B * 4, 2, H, W))
         warped = warped.reshape(B, self.in_channels, H, W)
-        additional['warped'] = warped
 
         x = probs[:, 0:1, :, :] * predicted
         for i in range(4):
             x += probs[:, i + 1:i + 2, :, :] * warped[:, i * self.out_channels: (i + 1) * self.out_channels, :, :]
 
-        additional['output'] = x
-        return x, additional
+        if self.do_normalization:
+            unnormalized_x = unnormalize(x, self.mean, self.std)
+        else:
+            unnormalized_x = x
 
-    def loss(self, additional, target, coef=(1.0, 0.5, 0.5)):
+        if additional_dict:
+            additional = dict()
+            additional['predicted'] = predicted
+            additional['weights'] = weights
+            additional['warped'] = warped
+            additional['output'] = x
+            return unnormalized_x, additional
+
+        return unnormalized_x
+
+    def loss(self, additional, target, coef=(1.0, 1.0, 1.0)):
+        if self.do_normalization:
+            target = normalize(target, self.mean, self.std)
+
         # compute f2m prediction
         f2m_weights = additional['weights'][:, 1:, :, :]
         probs = F.softmax(f2m_weights, dim=1)
         f2m_out = torch.zeros_like(additional['output'], device=additional['output'].device)
         for i in range(4):
-            f2m_out += probs[:, i:i + 1, :, :] * additional['warped'][:, i * self.out_channels: (i + 1) * self.out_channels, :, :]
+            f2m_out += probs[:, i:i + 1, :, :] * additional['warped'][:,
+                                                 i * self.out_channels: (i + 1) * self.out_channels, :, :]
 
         loss_output = F.mse_loss(additional['output'], target)
         loss_f2f = F.mse_loss(additional['predicted'], target)
