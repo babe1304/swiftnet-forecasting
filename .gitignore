@@ -14,6 +14,7 @@ __pycache__/
 *.ppm
 weights/
 datasets/
+external_packages/
 
 # Distribution / packaging
 .Python

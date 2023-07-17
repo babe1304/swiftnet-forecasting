@@ -12,7 +12,7 @@ import os
 import time
 import pickle
 
-from models.f2f import *
+from models.f2mf import *
 from models.semseg import SemsegModel
 from models.resnet.resnet_pyramid_forecast import *
 
@@ -23,18 +23,18 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 moving_IDs = range(11, 18 + 1)
 timestep = 9
-f2f_levels = 8
 
-forecast_after_up_block = 2
+forecast_after_up_block = 3
 pyramid_levels = 3
 
 begin_time = time.strftime("%H_%M_%d_%m_%Y", time.localtime())
-custom_desc = '_64x32_corr_weighted_split_dconv_offset_conv_with_corr'
-current_dir = 'F2F-' + str(f2f_levels) + custom_desc + '_t' + str(timestep) + '_' + begin_time
+custom_desc = '_64_32_weighted_add'
 
-SAVE_DIR = '/path/to/save/root/' + str(pyramid_levels) + '_levels/' + current_dir + '/'
-os.mkdir(SAVE_DIR)
-print('Saving in: ' + SAVE_DIR)
+current_dir = 'F2MF' + custom_desc + '_t' + str(timestep) + '_' + begin_time
+
+# SAVE_DIR = '/path/to/save/root/' + str(pyramid_levels) + '_levels/' + current_dir + '/'
+# os.mkdir(SAVE_DIR)
+# print('Saving in: ' + SAVE_DIR)
 
 mean, std = None, None
 mean = torch.tensor(
@@ -45,8 +45,8 @@ std = torch.tensor(
     device=device)
 do_normalization = mean is not None and std is not None
 
-# f2f_model = DeformF2F_N(N=f2f_levels, in_channels=512, out_channels=128, mean=mean, std=std, split_input_dconv=True)
-f2f_model = DeformF2F_N_corr(N=f2f_levels, in_channels=512, out_channels=128, mean=mean, std=std, split_input_dconv=True)
+model = F2MF(in_channels=512, out_channels=128, mean=mean, std=std, patch_size=9)
+model.load_state_dict(torch.load('/path/to/pretrained/model'))
 
 backbone = resnet18(pretrained=True,
                     pyramid_levels=pyramid_levels,
@@ -65,16 +65,16 @@ semseg_model.load_state_dict(
 
 print('Normalize:' + str(do_normalization))
 
-f2f_model.to(device)
+model.to(device)
 semseg_model.to(device)
 # print(model)
-f2f_model.train()
-# semseg_model.train()
+model.train()
+semseg_model.train()
 
 # Hyperparameters
-initial_learning_rate1 = 5e-4
-batch_size = 12
-num_epochs = 160
+initial_learning_rate1 = 5e-5
+batch_size = 5
+num_epochs = 50
 # num_epochs2 = 5
 
 
@@ -100,8 +100,8 @@ class SemsegCrossEntropy(nn.Module):
         return loss
 
 
-def evaluate(f2f_model, segm_model, loader):
-    f2f_model.eval()
+def evaluate(model, segm_model, loader):
+    model.eval()
     segm_model.eval()
 
     loss_fn_ce = SemsegCrossEntropy(ignore_id=255)
@@ -119,9 +119,9 @@ def evaluate(f2f_model, segm_model, loader):
                 target_feats = target_feats.to(device)
                 sem_seg_gt = sem_seg_gt.to(device)
 
-                pred_feats, normalized_pred = f2f_model.forward(past_feats, additional=True)
+                pred_feats, additional = model(past_feats, additional_dict=True)
 
-                loss = f2f_model.loss(normalized_pred, target_feats)
+                loss = model.loss(additional, target_feats)
                 loss_l2.append(loss.cpu().item())
 
                 logits = segm_model.forward_decoder_no_skip(pred_feats, image_size=sem_seg_gt.shape[-2:])
@@ -142,7 +142,7 @@ def evaluate(f2f_model, segm_model, loader):
         print("mIoU: ", round(miou * 100, 2), '%')
         print("mIoU-MO: ", round(miou_mo * 100, 2), '%')
 
-    f2f_model.train()
+    model.train()
     segm_model.train()
     return miou, miou_mo, mse, ce
 
@@ -151,7 +151,7 @@ if __name__ == '__main__':
     dataset_train = CityscapesFeatureSequence(
         '/path/to/saved/features',
         '/path/to/ground/truths',
-        delta=timestep, subset='train', sem_labels=True, extended=False, flip=False)
+        delta=timestep, subset='train', sem_labels=True, extended=False, flip=True)
     dataset_val = CityscapesFeatureSequence(
         '/path/to/saved/features',
         '/path/to/ground/truths',
@@ -160,7 +160,7 @@ if __name__ == '__main__':
     train_loader = DataLoader(dataset_train, batch_size=batch_size, shuffle=True, collate_fn=None, num_workers=2,
                               persistent_workers=True, prefetch_factor=2)
     val_loader = DataLoader(dataset_val, batch_size=1, shuffle=False, collate_fn=None, num_workers=2,
-                            persistent_workers=True, prefetch_factor=8)
+                            persistent_workers=True, prefetch_factor=4)
 
     metrics_dict = {
         'val_miou': [],
@@ -173,7 +173,16 @@ if __name__ == '__main__':
         'train_ce': []
     }
 
-    optimizer = torch.optim.Adam(f2f_model.parameters(), lr=initial_learning_rate1)
+    # initial eval
+    evaluate(model, semseg_model, val_loader)
+
+    # parameters = list(model.parameters())
+    # for layer in semseg_model.backbone.upsample_blends:
+    #     parameters.extend(layer.parameters())
+    #
+    # optimizer = torch.optim.SGD(parameters, lr=initial_learning_rate1)
+    optimizer = torch.optim.SGD(list(model.parameters()) + list(semseg_model.parameters()), lr=initial_learning_rate1)
+    # optimizer = torch.optim.Adam(parameters, lr=initial_learning_rate1)
     # optimizer = torch.optim.Adam(list(model.parameters()) + list(semseg_model.parameters()), lr=learning_rate1)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=len(train_loader), eta_min=1e-7)
 
@@ -195,15 +204,21 @@ if __name__ == '__main__':
                 past_feats, target_feats, sem_seg_gt = batch
                 past_feats = past_feats.to(device)
                 target_feats = target_feats.to(device)
-                # sem_seg_gt = sem_seg_gt.to(device)
+                sem_seg_gt = sem_seg_gt.to(device)
                 # print(past_feats.shape, target_feats.shape)
 
                 optimizer.zero_grad()
 
-                pred_feats, normalized_pred = f2f_model.forward(past_feats, additional=True)
+                pred_feats, additional = model.forward(past_feats, additional_dict=True)
+                logits = semseg_model.forward_decoder_no_skip(pred_feats, image_size=sem_seg_gt.shape[-2:])
 
-                loss = f2f_model.loss(normalized_pred, target_feats)
-                loss_l2.append(loss.cpu().item())
+                probs = logits.softmax(dim=1)
+                # preds = torch.argmax(logits, 1)
+                loss = loss_fn_ce(probs, sem_seg_gt)
+                loss_ce.append(loss.cpu().item())
+
+                # loss = model.loss(additional, target_feats)
+                # loss_l2.append(loss.cpu().item())
 
                 # logits = semseg_model.forward_decoder_no_skip(pred_feats, image_size=sem_seg_gt.shape[1:])
                 # preds = torch.argmax(logits, 1)
@@ -220,10 +235,10 @@ if __name__ == '__main__':
         # scheduler.step()
 
         print("--- TRAIN ---")
-        train_mse = np.mean(np.array(loss_l2))
-        # train_ce = np.mean(np.array(loss_ce))
-        print("L2 (MSE) loss: ", train_mse)
-        # print("Cross entropy loss: ", train_ce)
+        # train_mse = np.mean(np.array(loss_l2))
+        train_ce = np.mean(np.array(loss_ce))
+        # print("L2 (MSE) loss: ", train_mse)
+        print("Cross entropy loss: ", train_ce)
         # train_miou, train_per_class_iou = conf_matrix.get_metrics(verbose=False)
         # train_miou_mo = conf_matrix.get_subset_miou(moving_IDs)
         # print("mIoU: ",  round(train_miou * 100, 2), '%')
@@ -231,28 +246,28 @@ if __name__ == '__main__':
 
         # conf_matrix.reset()
 
-        val_miou, val_miou_mo, val_mse, val_ce = evaluate(f2f_model, semseg_model, val_loader)
+        val_miou, val_miou_mo, val_mse, val_ce = evaluate(model, semseg_model, val_loader)
         metrics_dict['val_miou'].append(val_miou)
         metrics_dict['val_miou_mo'].append(val_miou_mo)
         metrics_dict['val_mse'].append(val_mse)
         metrics_dict['val_ce'].append(val_ce)
-        metrics_dict['train_mse'].append(train_mse)
-        # metrics_dict['train_ce'].append(train_ce)
+        # metrics_dict['train_mse'].append(train_mse)
+        metrics_dict['train_ce'].append(train_ce)
         # metrics_dict['train_miou'].append(train_miou)
         # metrics_dict['train_miou_mo'].append(train_miou_mo)
 
-        if val_miou > max_val_miou:
-            max_val_miou = val_miou
-            max_val_miou_mo = val_miou_mo
-            f2f_model.eval()
-            torch.save(f2f_model.state_dict(), SAVE_DIR + 'f2f_model.pth')
-            f2f_model.train()
-            # torch.save(semseg_model.state_dict(), SAVE_DIR + 'semseg_model.pth')
-            print('Saving')
-
-        with open(SAVE_DIR + 'metrics.pickle', 'wb') as f:
-            pickle.dump(metrics_dict, f)
-        print()
-
-    os.rename(SAVE_DIR, SAVE_DIR.replace(current_dir, current_dir + '_' + str(round(max_val_miou * 100, 2)) + '_' + str(
-        round(max_val_miou_mo * 100, 2))))
+    #     if val_miou > max_val_miou:
+    #         max_val_miou = val_miou
+    #         max_val_miou_mo = val_miou_mo
+    #         model.eval()
+    #         torch.save(model.state_dict(), SAVE_DIR + 'model.pth')
+    #         model.train()
+    #         # torch.save(semseg_model.state_dict(), SAVE_DIR + 'semseg_model.pth')
+    #         print('Saving')
+    #
+    #     with open(SAVE_DIR + 'metrics.pickle', 'wb') as f:
+    #         pickle.dump(metrics_dict, f)
+    #     print()
+    #
+    # os.rename(SAVE_DIR, SAVE_DIR.replace(current_dir, current_dir + '_' + str(round(max_val_miou * 100, 2)) + '_' + str(
+    #     round(max_val_miou_mo * 100, 2))))

@@ -24,29 +24,28 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 moving_IDs = range(11, 18 + 1)
 timestep = 9
 
-forecast_after_up_block = 2
+forecast_after_up_block = 3
 pyramid_levels = 3
 
 begin_time = time.strftime("%H_%M_%d_%m_%Y", time.localtime())
-custom_desc = '_64x32_no_mask_normalized_coef_eq'#'_128x64_first_3x3_rest_5x5'
+custom_desc = '_128_64_extended_patch_11'
 
 current_dir = 'F2MF' + custom_desc + '_t' + str(timestep) + '_' + begin_time
 
-# SAVE_DIR = '/home/jakov/Desktop/swiftnet-forecasting/weights/F2F/DeformF2F-' + str(f2f_levels) + '/current/'
-SAVE_DIR = '/home/jakov/Desktop/swiftnet-forecasting/weights/test/' + str(pyramid_levels) + '_levels/' + current_dir + '/'
+SAVE_DIR = '/path/to/save/root/' + str(pyramid_levels) + '_levels/' + current_dir + '/'
 os.mkdir(SAVE_DIR)
 print('Saving in: ' + SAVE_DIR)
 
 mean, std = None, None
 mean = torch.tensor(
-    np.load('/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/features/3_levels/2_skips_32x64/mean.npy'),
+    np.load('/path/to/mean/numpy/array'),
     device=device)
 std = torch.tensor(
-    np.load('/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/features/3_levels/2_skips_32x64/std.npy'),
+    np.load('/path/to/std/numpy/array'),
     device=device)
 do_normalization = mean is not None and std is not None
 
-model = F2MF(in_channels=512, out_channels=128, mean=mean, std=std)
+model = F2MF(in_channels=512, out_channels=128, mean=mean, std=std, patch_size=11)
 
 backbone = resnet18(pretrained=True,
                     pyramid_levels=pyramid_levels,
@@ -61,9 +60,7 @@ backbone = resnet18(pretrained=True,
 
 semseg_model = SemsegModel(backbone, 19, k=1, bias=True)
 semseg_model.load_state_dict(
-    # torch.load('weights/rn18_pyramid/forecast/boundary/72-60_rn18_pyramid_forecast/stored/model_best.pt'), strict=False)
-    torch.load('weights/rn18_pyramid/test/3_levels/74-06_rn18_pyramid_forecast_2_skips/stored/model_best.pt'), strict=False)
-    # torch.load('weights/rn18_pyramid/test/3_levels/75-95_rn18_pyramid_forecast_3_skips/stored/model_best.pt'), strict=False)
+    torch.load('/path/to/pretrained/model'), strict=False)
 
 print('Normalize:' + str(do_normalization))
 
@@ -76,7 +73,7 @@ model.train()
 # Hyperparameters
 initial_learning_rate1 = 5e-4
 batch_size = 12
-num_epochs = 160
+num_epochs = 100
 # num_epochs2 = 5
 
 
@@ -127,8 +124,9 @@ def evaluate(model, segm_model, loader):
                 loss_l2.append(loss.cpu().item())
 
                 logits = segm_model.forward_decoder_no_skip(pred_feats, image_size=sem_seg_gt.shape[-2:])
+                probs = logits.softmax(dim=1)
                 preds = torch.argmax(logits, 1)
-                loss_ce.append(loss_fn_ce(logits, sem_seg_gt).cpu().item())
+                loss_ce.append(loss_fn_ce(probs, sem_seg_gt).cpu().item())
                 
                 conf_matrix.update(preds.cpu().numpy().flatten(), sem_seg_gt.cpu().numpy().flatten())
 
@@ -150,24 +148,18 @@ def evaluate(model, segm_model, loader):
 
 if __name__ == '__main__':
     dataset_train = CityscapesFeatureSequence(
-        # '/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/features/2_levels/1_skip_32x64/train',
-        '/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/features/3_levels/2_skips_32x64/train',
-        # '/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/features/3_levels/3_skips_64x128/train',
-        # '/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/features/3_levels/new/3_skips_64x128/train',
-        '/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/gtFine/train',
-        delta=timestep, subset='train')
+        '/path/to/saved/features',
+        '/path/to/ground/truths',
+        delta=timestep, subset='train', sem_labels=True, extended=True, flip=True)
     dataset_val = CityscapesFeatureSequence(
-        # '/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/features/2_levels/1_skip_32x64/val',
-        '/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/features/3_levels/2_skips_32x64/val',
-        # '/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/features/3_levels/3_skips_64x128/val',
-        # '/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/features/3_levels/new/3_skips_64x128/val',
-        '/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/gtFine/val',
-        delta=timestep, subset='val')
+        '/path/to/saved/features',
+        '/path/to/ground/truths',
+        delta=timestep, subset='val', sem_labels=True, extended=False, flip=False)
 
-    train_loader = DataLoader(dataset_train, batch_size=batch_size, shuffle=True, collate_fn=None, num_workers=4,
+    train_loader = DataLoader(dataset_train, batch_size=batch_size, shuffle=True, collate_fn=None, num_workers=2,
                               persistent_workers=True, prefetch_factor=2)
-    val_loader = DataLoader(dataset_val, batch_size=1, shuffle=False, collate_fn=None, num_workers=4,
-                            persistent_workers=True, prefetch_factor=8)
+    val_loader = DataLoader(dataset_val, batch_size=1, shuffle=False, collate_fn=None, num_workers=2,
+                            persistent_workers=True, prefetch_factor=4)
 
     metrics_dict = {
         'val_miou': [],

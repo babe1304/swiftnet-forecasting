@@ -66,12 +66,13 @@ class _Upsample(nn.Module):
             warnings.warn(f'Fixed upsample size', UserWarning)
 
     def forward(self, x, skip):
-        skip = self.bottleneck.forward(skip)
-        if self.detach_skip:
-            skip = skip.detach()
-        skip_size = skip.size()[2:4]
+        # skip_size = skip.size()[2:4]
+        skip_size = torch.Size((x.size()[-2] * 2, x.size()[-1] * 2))
         x = self.upsampling_method(x, skip_size)
         if self.use_skip:
+            skip = self.bottleneck.forward(skip)
+            if self.detach_skip:
+                skip = skip.detach()
             x = x + skip
         x = self.blend_conv.forward(x)
         return x

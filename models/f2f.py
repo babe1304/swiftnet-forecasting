@@ -53,22 +53,26 @@ class BN_ReLU_DConv(torch.nn.Module):
 
 
 class Split_BN_ReLU_DConv(torch.nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size):
+    def __init__(self, in_channels, out_channels, kernel_size, corr_channels=0, offset_kernel_size=None, weighted=True):
         super(Split_BN_ReLU_DConv, self).__init__()
 
         self.in_channels = in_channels
         self.out_channels = out_channels
+        self.weighted = weighted
+
+        if offset_kernel_size is None:
+            offset_kernel_size = kernel_size
 
         self.bn = torch.nn.BatchNorm2d(in_channels)
 
         self.offset_convs = torch.nn.ModuleList()
         self.split_dconvs = torch.nn.ModuleList()
         for i in range(int(in_channels / out_channels)):
-            offset_conv = torch.nn.Conv2d(in_channels=in_channels,
+            offset_conv = torch.nn.Conv2d(in_channels=in_channels + corr_channels,
                                           out_channels=2 * kernel_size * kernel_size,
-                                          kernel_size=kernel_size,
+                                          kernel_size=offset_kernel_size,
                                           stride=1,
-                                          padding=int((kernel_size - 1) / 2),
+                                          padding=int((offset_kernel_size - 1) / 2),
                                           bias=True)
 
             dconv = DeformConv2d(in_channels=out_channels,
@@ -81,28 +85,41 @@ class Split_BN_ReLU_DConv(torch.nn.Module):
             self.offset_convs.append(offset_conv)
             self.split_dconvs.append(dconv)
 
-    def forward(self, x):
+        if weighted:
+            self.weights_dconv = BN_ReLU_DConv(in_channels + corr_channels, 4, 3)
+            # self.weights_dconv = torch.nn.Sequential(*[BN_ReLU_DConv(in_channels, 128, 1),
+            #                                            BN_ReLU_DConv(128, 128, 3),
+            #                                            BN_ReLU_DConv(128, 4, 3)])
+
+    def forward(self, x, corr=None):
         x = torch.relu(self.bn(x))
 
-        feats = []
-        out = None
+        if corr is not None:
+            combined = torch.cat((x, corr), dim=1)
+
+        if self.weighted:
+            if corr is not None:
+                weights = self.weights_dconv(combined)
+            else:
+                weights = self.weights_dconv(x)
+            probs = F.softmax(weights, dim=1)
+
+        # feats = []
+        out = torch.zeros_like(x[:, 0:self.out_channels, :, :])
         # print(x.shape)
         for i in range(int(self.in_channels / self.out_channels)):
-            offsets = self.offset_convs[i](x)
+            offsets = self.offset_convs[i](combined)
             x_i = x[:, i * self.out_channels:(i + 1) * self.out_channels, :, :]
             # print(i * self.out_channels,(i+1) * self.out_channels)
             # print(x_i.shape)
             x_i = self.split_dconvs[i](x_i, offsets)
             # print(x_i.shape)
             # feats.append(x_i)
-            if out is None:
-                out = x_i
+
+            if self.weighted:
+                out += probs[:, i:i + 1, :, :] * x_i
             else:
-                out = out + x_i
-            # if out is None:
-            #     out = x_i
-            # else:
-            #     out = torch.cat((out, x_i), dim=1)
+                out += x_i
 
         # x = torch.cat(feats, dim=1)
         # print(x.shape)
@@ -128,6 +145,52 @@ class BN_ReLU_Conv(torch.nn.Module):
         return x
 
 
+class ConvF2F_N(torch.nn.Module):
+    def __init__(self, N, in_channels, out_channels, mean=None, std=None):
+        super(ConvF2F_N, self).__init__()
+        self.N = N
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.mean, self.std = None, None
+
+        self.do_normalization = mean is not None and std is not None
+        if self.do_normalization:
+            self.mean = mean.reshape((1, mean.shape[0], 1, 1))
+            self.std = std.reshape((1, std.shape[0], 1, 1))
+
+        layers = []
+
+        layers.append(BN_ReLU_Conv(out_channels, out_channels, 1))
+
+        for i in range(N - 1):
+            layers.append(BN_ReLU_Conv(out_channels, out_channels, 1))
+
+        self.model = torch.nn.Sequential(*layers)
+        print(self.model)
+
+    def forward(self, x, additional=False):
+        if self.do_normalization:
+            x = normalize_concatenated(x, self.mean, self.std)
+
+        x = self.model(x[:, 3 * self.out_channels:, :, :])
+
+        if self.do_normalization:
+            unnormalized_x = unnormalize(x, self.mean, self.std)
+        else:
+            unnormalized_x = x
+
+        if additional:
+            return unnormalized_x, x
+
+        return unnormalized_x
+
+    def loss(self, pred, target):
+        if self.do_normalization:
+            target = normalize(target, self.mean, self.std)
+
+        return F.mse_loss(pred, target)
+
+
 class DeformF2F_N(torch.nn.Module):
     def __init__(self, N, in_channels, out_channels, mean=None, std=None, split_input_dconv=False):
         super(DeformF2F_N, self).__init__()
@@ -144,25 +207,12 @@ class DeformF2F_N(torch.nn.Module):
         layers = []
 
         if split_input_dconv:
-            layers.append(Split_BN_ReLU_DConv(in_channels, out_channels, 1))
-            # layers.append(BN_ReLU_Conv(in_channels, out_channels*2, 1))
-            # layers.append(BN_ReLU_Conv(out_channels*2, out_channels, 1))
+            layers.append(Split_BN_ReLU_DConv(in_channels, out_channels, 1, weighted=True))
         else:
             layers.append(BN_ReLU_DConv(in_channels, out_channels, 1))
-            # layers.append(BN_ReLU_DConv(in_channels, out_channels, 1, offset_kernel_size=3))
 
         for i in range(N - 1):
             layers.append(BN_ReLU_DConv(out_channels, out_channels, 3))
-            # layers.append(BN_ReLU_DConv(out_channels, out_channels, 3, offset_kernel_size=3))
-
-            # offset_conv = torch.nn.Conv2d(in_channels=out_channels,
-            #                                out_channels=2 * 3 * 3,
-            #                                kernel_size=3,
-            #                                stride=1,
-            #                                dilation = 2,
-            #                                padding=int((3 - 1)),
-            #                                bias=True)
-            # layers.append(BN_ReLU_DConv(out_channels, out_channels, 3, custom_offset_op=offset_conv))
 
         self.model = torch.nn.Sequential(*layers)
         print(self.model)
@@ -300,7 +350,7 @@ class CorrelationModule(torch.nn.Module):
 
 
 class DeformF2F_N_corr(torch.nn.Module):
-    def __init__(self, N, in_channels, out_channels, mean=None, std=None):
+    def __init__(self, N, in_channels, out_channels, mean=None, std=None, split_input_dconv=False):
         super(DeformF2F_N_corr, self).__init__()
         self.N = N
         self.in_channels = in_channels
@@ -316,11 +366,17 @@ class DeformF2F_N_corr(torch.nn.Module):
         input_frames = 4
         self.correlation = CorrelationModule(in_channels_one=out_channels, out_channels_one=128,
                                              patch_size=patch_size)
-        self.fusion = BN_ReLU_DConv(in_channels, out_channels, 1)
+        if split_input_dconv:
+            self.fusion = Split_BN_ReLU_DConv(in_channels, out_channels, 1,
+                                              corr_channels=patch_size ** 2 * (input_frames - 1), weighted=True)
+        else:
+            self.fusion = BN_ReLU_DConv(in_channels, out_channels, 1)
+            # self.fusion = BN_ReLU_DConv(in_channels + patch_size ** 2 * (input_frames - 1), out_channels*2, 1)
         in_channels_with_corr = out_channels + patch_size ** 2 * (input_frames - 1)
 
         dconv_layers = []
         in_dconv = BN_ReLU_DConv(in_channels_with_corr, out_channels * 2, 3)
+        # in_dconv = BN_ReLU_DConv(out_channels * 2, out_channels * 2, 3)
         dconv_layers.append(in_dconv)
 
         for i in range(N - 3):
@@ -332,20 +388,37 @@ class DeformF2F_N_corr(torch.nn.Module):
 
         print(self.correlation, self.fusion, self.shared_dconv)
 
-    def forward(self, x):
+    def forward(self, x, additional=False):
         if self.do_normalization:
             x = normalize_concatenated(x, self.mean, self.std)
 
-        fused = self.fusion(x)
+        # fused = self.fusion(x)
         corr = self.correlation(x)
+        fused = self.fusion(x, corr)
         combined = torch.cat((fused, corr), dim=1)
+        # combined = self.fusion(torch.cat((x, corr), dim=1))
 
         x = self.shared_dconv(combined)
-        return x
+
+        if self.do_normalization:
+            unnormalized_x = unnormalize(x, self.mean, self.std)
+        else:
+            unnormalized_x = x
+
+        if additional:
+            return unnormalized_x, x
+
+        return unnormalized_x
+
+    def loss(self, pred, target):
+        if self.do_normalization:
+            target = normalize(target, self.mean, self.std)
+
+        return F.mse_loss(pred, target)
 
 
 if __name__ == '__main__':
-    x = torch.rand((1, 512, 32, 16))
+    x = torch.rand((10, 512, 32, 16))
     layer1 = BN_ReLU_DConv(512, 128, 1)
     layer2 = BN_ReLU_DConv(128, 128, 3)
 
@@ -375,4 +448,3 @@ if __name__ == '__main__':
     dconv = BN_ReLU_DConv(512, 128, 1, offset_kernel_size=5)
     dconv(x)
     print(x.shape)
-

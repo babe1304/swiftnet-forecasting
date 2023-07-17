@@ -13,6 +13,7 @@ from models.loss import BoundaryAwareFocalLoss, SemsegCrossEntropy
 from data.transform import *
 from data.cityscapes import Cityscapes, CityscapesSequence, CityscapesFeatureSequence
 from evaluation import StorePreds
+import torchvision.transforms as T
 
 from models.util import get_n_params
 
@@ -22,9 +23,10 @@ dir_path = os.path.dirname(path)
 root = Path(__file__).parent.parent.absolute() / Path('datasets/Cityscapes')
 
 evaluating = True
+# random_crop_size = 448
 random_crop_size = 768
 num_levels = 2
-forecast_after_up_block = 1
+forecast_after_up_block = 2
 
 scale = 1
 mean = [73.15, 82.90, 72.3]
@@ -45,9 +47,13 @@ dist_trans_bins = (16, 64, 128)
 dist_trans_alphas = (8., 4., 2., 1.)
 target_size = (2048, 1024)
 target_size_feats = (2048 // ostride, 1024 // ostride)
+# target_size = (1024, 512)
+# target_size_feats = (1024 // ostride, 512 // ostride)
+
 
 trans_val = Compose(
     [Open(),
+     Resize(target_size),
      SetTargetSize(target_size=target_size, target_size_feats=target_size_feats),
      Tensor(),
      ]
@@ -58,6 +64,7 @@ if evaluating:
 else:
     trans_train = Compose(
         [Open(),
+         Resize(target_size),
          RandomFlip(),
          RandomSquareCropAndScale(random_crop_size, ignore_id=ignore_id, mean=mean_rgb),
          SetTargetSize(target_size=target_size_crops, target_size_feats=target_size_crops_feats),
@@ -68,27 +75,7 @@ else:
 dataset_train = Cityscapes(root, transforms=trans_train, subset='train')
 dataset_val = Cityscapes(root, transforms=trans_val, subset='val')
 
-'''
-dataset_train = CityscapesSequence('/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/leftImg8bit_sequence/train',
-                                '/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/gtFine/train',
-                                transforms=trans_val, delta=0, subset='train')
-dataset_val = CityscapesSequence('/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/leftImg8bit_sequence/val',
-                                '/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/gtFine/val',
-                                transforms=trans_val, delta=0, subset='val')
 
-dataset_train = CityscapesFeatureSequence('/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/features/2_levels/1_skip_32x64/train',
-                                        # '/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/features/2_levels/2_skips_64x128/train',
-                                          # '/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/features/3_levels/2_skips_32x64/train',
-                                          # '/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/features/3_levels/3_skips_64x128/train',
-                                        '/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/gtFine/train',
-                                        delta=9, subset='train')
-dataset_val = CityscapesFeatureSequence('/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/features/2_levels/1_skip_32x64/val',
-                                        # '/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/features/2_levels/2_skips_64x128/val',
-                                        # '/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/features/3_levels/2_skips_32x64/val',
-                                        # '/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/features/3_levels/3_skips_64x128/val',
-                                        '/run/media/jakov/2TB KC3000/Users/bubas/Data/Cityscapes/gtFine/val',
-                                        delta=9, subset='val')
-'''
 backbone = resnet18(pretrained=True,
                     pyramid_levels=num_levels,
                     k_upsample=3,
@@ -101,10 +88,7 @@ backbone = resnet18(pretrained=True,
                     forecast_after_up_block=forecast_after_up_block)
 model = SemsegModel(backbone, num_classes, k=1, bias=True)
 if evaluating:
-    # model.load_state_dict(torch.load('weights/rn18_pyramid/test/2_levels/73-66_rn18_pyramid_forecast_2_skips/stored/model_best.pt'), strict=False)
-    # model.load_state_dict(torch.load('weights/rn18_pyramid/test/3_levels/74-06_rn18_pyramid_forecast_2_skips/stored/model_best.pt'), strict=False)
-    # model.load_state_dict(torch.load('weights/rn18_pyramid/test/3_levels/75-95_rn18_pyramid_forecast_3_skips/stored/model_best.pt'), strict=False)
-    model.load_state_dict(torch.load('weights/rn18_pyramid/forecast/boundary/72-60_rn18_pyramid_forecast/stored/model_best.pt'), strict=False)
+    model.load_state_dict(torch.load('/path/to/pretrained/model'), strict=False)
 
 else:
     model.criterion = BoundaryAwareFocalLoss(gamma=.5, num_classes=num_classes, ignore_id=ignore_id)
@@ -134,7 +118,7 @@ if not evaluating:
 
 batch_size = bs = 16
 print(f'Batch size: {bs}')
-nw = 2
+nw = 4
 
 loader_val = DataLoader(dataset_val, batch_size=1, collate_fn=custom_collate, num_workers=nw, persistent_workers=True)
 if evaluating:
@@ -149,7 +133,6 @@ ft_params = get_n_params(model.fine_tune_params())
 ran_params = get_n_params(model.random_init_params())
 assert total_params == (ft_params + ran_params)
 print(f'Num params: {total_params:,} = {ran_params:,}(random init) + {ft_params:,}(fine tune)')
-
 
 if evaluating:
     eval_loaders = [(loader_val, 'val'), (loader_train, 'train')]

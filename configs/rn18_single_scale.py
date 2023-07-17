@@ -15,9 +15,10 @@ from evaluation import StorePreds
 
 from models.util import get_n_params
 
-root = Path.home() / Path('datasets/Cityscapes')
 path = os.path.abspath(__file__)
 dir_path = os.path.dirname(path)
+#root = Path.home() / Path('datasets/Cityscapes')
+root = Path(__file__).parent.parent.absolute() / Path('datasets/Cityscapes')
 
 evaluating = False
 random_crop_size = 768
