@@ -76,17 +76,14 @@ class Cityscapes(Dataset):
 
     def __getitem__(self, item):
         ret_dict = {
-            'image': str(self.images[item]),  # Convert Path object to string
+            'image': self.images[item],
             'name': self.images[item].stem,
             'subset': self.subset,
         }
         if self.has_labels:
-            ret_dict['labels'] = str(self.labels[item])  # Convert Path object to string
+            ret_dict['labels'] = self.labels[item]
         if self.epoch is not None:
             ret_dict['epoch'] = int(self.epoch.value)
-
-        ret_dict['image'] = T.ToTensor()(Image.open(ret_dict['image']).convert('RGB'))
-
         return self.transforms(ret_dict)
 
 
