@@ -22,7 +22,7 @@ dir_path = os.path.dirname(path)
 #root = Path.home() / Path('datasets/Cityscapes')
 root = Path(__file__).parent.parent.absolute() / Path('datasets/Cityscapes')
 
-evaluating = True
+evaluating = False
 # random_crop_size = 448
 random_crop_size = 768
 num_levels = 2
@@ -89,7 +89,6 @@ backbone = resnet18(pretrained=True,
 model = SemsegModel(backbone, num_classes, k=1, bias=True)
 if evaluating:
     model.load_state_dict(torch.load('/path/to/pretrained/model'), strict=False)
-
 else:
     model.criterion = BoundaryAwareFocalLoss(gamma=.5, num_classes=num_classes, ignore_id=ignore_id)
     #model.criterion = SemsegCrossEntropy(num_classes=num_classes, ignore_id=ignore_id)
