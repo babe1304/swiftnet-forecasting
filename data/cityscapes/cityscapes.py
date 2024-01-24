@@ -54,8 +54,8 @@ class Cityscapes(Dataset):
     mean = [0.485, 0.456, 0.406]
     std = [0.229, 0.224, 0.225]
 
-    def __init__(self, root: Path, transforms: lambda x: x, subset='train', open_depth=False, images_dir='rgb',
-                 labels_dir='labels', epoch=None):
+    def __init__(self, root: Path, transforms: lambda x: x, subset='train', open_depth=False, 
+                 images_dir='leftImg8bit', labels_dir='gtFine', epoch=None):
         self.root = root
         self.images_dir = self.root / images_dir / subset
         self.labels_dir = self.root / labels_dir / subset
@@ -63,8 +63,7 @@ class Cityscapes(Dataset):
         self.subset = subset
         self.has_labels = subset != 'test'
         self.open_depth = open_depth
-        print(self.images_dir.name, self.labels_dir.name)
-        self.images = list(sorted(self.images_dir.glob('*/*.ppm')))
+        self.images = list(sorted(self.images_dir.glob('*/*.png')))
         if self.has_labels:
             self.labels = list(sorted(self.labels_dir.glob('*/*_gtFine_labelTrainIds.png')))
         self.transforms = transforms
@@ -85,6 +84,9 @@ class Cityscapes(Dataset):
             ret_dict['labels'] = self.labels[item]
         if self.epoch is not None:
             ret_dict['epoch'] = int(self.epoch.value)
+            
+        ret_dict['image'] = T.ToTensor()(Image.open(ret_dict['image']).convert('RGB'))
+
         return self.transforms(ret_dict)
 
 
