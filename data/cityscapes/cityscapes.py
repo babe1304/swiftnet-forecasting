@@ -63,6 +63,7 @@ class Cityscapes(Dataset):
         self.subset = subset
         self.has_labels = subset != 'test'
         self.open_depth = open_depth
+        print(self.images_dir.name, self.labels_dir.name)
         self.images = list(sorted(self.images_dir.glob('*/*.ppm')))
         if self.has_labels:
             self.labels = list(sorted(self.labels_dir.glob('*/*_gtFine_labelTrainIds.png')))
