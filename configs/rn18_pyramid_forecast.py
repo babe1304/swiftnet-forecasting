@@ -88,7 +88,7 @@ backbone = resnet18(pretrained=True,
                     forecast_after_up_block=forecast_after_up_block)
 model = SemsegModel(backbone, num_classes, k=1, bias=True)
 if evaluating:
-    model.load_state_dict(torch.load('/path/to/pretrained/model'), strict=False)
+    model.load_state_dict(torch.load('../results/73-50_rn18_pyramid_forecast'), strict=False)
 else:
     model.criterion = BoundaryAwareFocalLoss(gamma=.5, num_classes=num_classes, ignore_id=ignore_id)
     #model.criterion = SemsegCrossEntropy(num_classes=num_classes, ignore_id=ignore_id)
