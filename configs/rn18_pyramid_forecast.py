@@ -22,7 +22,7 @@ dir_path = os.path.dirname(path)
 #root = Path.home() / Path('datasets/Cityscapes')
 root = Path(__file__).parent.parent.absolute() / Path('datasets/Cityscapes')
 
-evaluating = False
+evaluating = True
 # random_crop_size = 448
 random_crop_size = 768
 num_levels = 2
