@@ -106,7 +106,7 @@ class Trainer:
                 for group in self.optimizer.param_groups:
                     print('LR: {:.4e}'.format(group['lr']))
                 eval_epoch = ((epoch % self.conf.eval_each == 0) or (epoch == num_epochs - 1))  # and (epoch > 0)
-                self.model.criterion.step_counter = 0
+                # self.model.criterion.step_counter = 0
                 print(f'Epoch: {epoch} / {num_epochs - 1}')
                 if eval_epoch and not self.args.dry:
                     print("Experiment dir: %s" % self.experiment_dir)

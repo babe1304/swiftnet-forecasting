@@ -284,6 +284,8 @@ class ResNet(nn.Module):
         #     x = self.spp.forward(x)
         for i, (sk, blend) in enumerate(zip(skips[1:], self.upsample_blends)):
             # print(i, sum(sk).shape, x.shape, self.target_sizes[i])
+            common_size = x.shape[2:]
+            resized_sk = [F.interpolate(s, size=common_size, mode='nearest') for s in sk]
             x = blend(x, sum(sk), up_size=self.target_sizes[i])
         return x, additional
 
