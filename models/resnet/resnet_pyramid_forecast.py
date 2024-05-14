@@ -283,8 +283,10 @@ class ResNet(nn.Module):
         # if self.use_spp:
         #     x = self.spp.forward(x)
         for i, (sk, blend) in enumerate(zip(skips[1:], self.upsample_blends)):
-            print(i, sum(sk).shape, x.shape, self.target_sizes[i])
-            x = blend(x, sum(sk), up_size=self.target_sizes[i])
+            if self.target_size is None:
+                x = blend(x, sum(sk))
+            else:
+                x = blend(x, sum(sk), up_size=self.target_sizes[i])
         return x, additional
 
     def forward_encoder(self, image):
