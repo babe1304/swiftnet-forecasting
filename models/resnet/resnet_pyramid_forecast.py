@@ -267,25 +267,27 @@ class ResNet(nn.Module):
         for l in range(1, self.pyramid_levels):
             if self.target_size is not None:
                 ts = list([si // 2 ** l for si in self.target_size])
-                pyramid += [
-                    F.interpolate(image, size=ts, mode=self.pyramid_subsample, align_corners=self.align_corners)]
+                pyramid.append(F.interpolate(image, size=ts, mode=self.pyramid_subsample, align_corners=self.align_corners))
             else:
-                pyramid += [F.interpolate(image, scale_factor=1 / 2 ** l, mode=self.pyramid_subsample,
-                                          align_corners=self.align_corners)]
+                pyramid.append(F.interpolate(image, scale_factor=1 / 2 ** l, mode=self.pyramid_subsample, align_corners=self.align_corners))
+        
+        # Process each pyramid level
         skips = [[] for _ in range(self.num_skip_levels)]
         additional = {'pyramid': pyramid}
         for idx, p in enumerate(pyramid):
             skips = self.forward_down(p, skips, idx=idx)
+            print(f"After forward_down, skips at idx {idx}: {[s.shape for s in skips[idx]]}")
+        
         skips = skips[::-1]
         x = skips[0][0]
-        if self.detach_upsample_in:
-            x = x.detach()
-        # if self.use_spp:
-        #     x = self.spp.forward(x)
+        print(f"x shape before upsample: {x.shape}")
+        
+        # Blend the upsampled features
         for i, (sk, blend) in enumerate(zip(skips[1:], self.upsample_blends)):
-            print(f"Shapes of tensors in sk at level {i}: {[s.shape for s in sk]}")
-            # print(i, sum(sk).shape, x.shape, self.target_sizes[i])
-            x = blend(x, sum(sk), up_size=self.target_sizes[i])
+            target_size = sk[0].shape[2:]  # Use the size of the first tensor in sk as the target size
+            resized_sk = [F.interpolate(s, size=target_size, mode='bilinear', align_corners=False) for s in sk]
+            print(f"Resized shapes of tensors in sk at level {i}: {[s.shape for s in resized_sk]}")
+            x = blend(x, sum(resized_sk), up_size=self.target_sizes[i])
         return x, additional
 
     def forward_encoder(self, image):
