@@ -283,14 +283,8 @@ class ResNet(nn.Module):
         # if self.use_spp:
         #     x = self.spp.forward(x)
         for i, (sk, blend) in enumerate(zip(skips[1:], self.upsample_blends)):
-            # Check if the sizes match before blending
-            if x.shape[1] != sum(sk).shape[1]:
-                # Adjust the size of sum(sk) to match x's size
-                sk_resized = F.interpolate(sum(sk), size=x.shape[2:], mode='bilinear', align_corners=False)
-            else:
-                sk_resized = sum(sk)
-            x = blend(x, sk_resized, up_size=self.target_sizes[i])
-            # print(i, sum(sk).shape, x.shape, self.target_sizes[i])
+            print(i, sum(sk).shape, x.shape, self.target_sizes[i])
+            x = blend(x, sum(sk), up_size=self.target_sizes[i])
         return x, additional
 
     def forward_encoder(self, image):
