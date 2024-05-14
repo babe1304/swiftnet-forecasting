@@ -85,7 +85,10 @@ backbone = resnet18(pretrained=True,
                     k_bneck=1,
                     output_stride=ostride,
                     efficient=True,
-                    forecast_after_up_block=forecast_after_up_block)
+                    forecast_after_up_block=forecast_after_up_block,
+                    target_size=target_size,
+                    target_size_feats=target_size_feats,
+                    num_classes=num_classes)
 model = SemsegModel(backbone, num_classes, k=1, bias=True)
 if evaluating:
     model.load_state_dict(torch.load('../results/73-50_rn18_pyramid_forecast/stored/model.pt'), strict=False)
