@@ -99,21 +99,20 @@ for m in model.modules():
         bn_count += 1
 print(f'Num BN layers: {bn_count}')
 
-if not evaluating:
-    lr = 4e-4
-    lr_min = 1e-6
-    fine_tune_factor = 4
-    weight_decay = 1e-4
-    epochs = 250
+lr = 4e-4
+lr_min = 1e-6
+fine_tune_factor = 4
+weight_decay = 1e-4
+epochs = 250
 
-    optim_params = [
-        {'params': model.random_init_params(), 'lr': lr, 'weight_decay': weight_decay},
-        {'params': model.fine_tune_params(), 'lr': lr / fine_tune_factor,
-         'weight_decay': weight_decay / fine_tune_factor},
-    ]
+optim_params = [
+    {'params': model.random_init_params(), 'lr': lr, 'weight_decay': weight_decay},
+    {'params': model.fine_tune_params(), 'lr': lr / fine_tune_factor,
+        'weight_decay': weight_decay / fine_tune_factor},
+]
 
-    optimizer = optim.Adam(optim_params, betas=(0.9, 0.99))
-    lr_scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, epochs, lr_min)
+optimizer = optim.Adam(optim_params, betas=(0.9, 0.99))
+lr_scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, epochs, lr_min)
 
 batch_size = bs = 16
 print(f'Batch size: {bs}')
