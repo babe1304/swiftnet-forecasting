@@ -308,6 +308,8 @@ class ResNet(nn.Module):
         num_channels = tensor.shape[1]
         if num_channels != target_channels:
             conv = nn.Conv2d(num_channels, target_channels, kernel_size=1)
+            if torch.cuda.is_available():
+                conv = conv.cuda()  # Move the conv layer to the GPU
             tensor = conv(tensor)
         return tensor
 
