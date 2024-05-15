@@ -284,8 +284,20 @@ class ResNet(nn.Module):
         #     x = self.spp.forward(x)
         for i, (sk, blend) in enumerate(zip(skips[1:], self.upsample_blends)):
             print(f"Shapes of tensors in sk at level {i}: {[s.shape for s in sk]}")
-            # print(i, sum(sk).shape, x.shape, self.target_sizes[i])
-            x = blend(x, sum(sk), up_size=self.target_sizes[i])
+            # Get the spatial dimensions of the tensors in sk
+            spatial_sizes = [tensor.shape[-2:] for tensor in sk]
+
+            # Find the maximum spatial size
+            max_spatial_size = max(spatial_sizes)
+
+            # Interpolate each tensor in sk to the maximum spatial size
+            interpolated_sk = [F.interpolate(tensor, size=max_spatial_size, mode='bilinear', align_corners=True) for tensor in sk]
+
+            # Sum the interpolated tensors
+            summed_sk = sum(interpolated_sk)
+
+            # Pass the interpolated and summed tensor to the _UpsampleBlend module
+            x = blend(x, summed_sk, up_size=self.target_sizes[i])
         return x, additional
 
     def forward_encoder(self, image):
