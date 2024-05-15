@@ -283,10 +283,6 @@ class ResNet(nn.Module):
         # if self.use_spp:
         #     x = self.spp.forward(x)
         for i, (sk, blend) in enumerate(zip(skips[1:], self.upsample_blends)):
-            shape = sk[0].shape
-            for i, s in enumerate(sk):
-                sk[i] = s.view(shape[0], -1, shape[-2], shape[-1])
-
             print(f"Shapes of tensors in sk at level {i}: {[s.shape for s in sk]}")
             # print(i, sum(sk).shape, x.shape, self.target_sizes[i])
             x = blend(x, sum(sk), up_size=self.target_sizes[i])
