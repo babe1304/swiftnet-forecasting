@@ -283,7 +283,6 @@ class ResNet(nn.Module):
         # if self.use_spp:
         #     x = self.spp.forward(x)
         for i, (sk, blend) in enumerate(zip(skips[1:], self.upsample_blends)):
-            print(f"Shapes of tensors in sk at level {i}: {[s.shape for s in sk]}")
             # Get the spatial dimensions of the tensors in sk
             spatial_sizes = [tensor.shape[-2:] for tensor in sk]
 
@@ -293,12 +292,24 @@ class ResNet(nn.Module):
             # Interpolate each tensor in sk to the maximum spatial size
             interpolated_sk = [F.interpolate(tensor, size=max_spatial_size, mode='bilinear', align_corners=True) for tensor in sk]
 
-            # Sum the interpolated tensors
-            summed_sk = sum(interpolated_sk)
+            # Adjust the number of channels for each tensor in interpolated_sk
+            target_channels = self.num_features  # Set the desired number of channels
+            adjusted_sk = [self.adjust_channels(tensor, target_channels) for tensor in interpolated_sk]
 
-            # Pass the interpolated and summed tensor to the _UpsampleBlend module
+            print(f"Shapes of tensors in sk at level {i}: {[s.shape for s in adjusted_sk]}")
+            # Sum the adjusted tensors
+            summed_sk = sum(adjusted_sk)
+
+            # Pass the summed tensor to the _UpsampleBlend module
             x = blend(x, summed_sk, up_size=self.target_sizes[i])
         return x, additional
+    
+    def adjust_channels(self, tensor, target_channels):
+        num_channels = tensor.shape[1]
+        if num_channels != target_channels:
+            conv = nn.Conv2d(num_channels, target_channels, kernel_size=1)
+            tensor = conv(tensor)
+        return tensor
 
     def forward_encoder(self, image):
         if isinstance(self.bn1[0], nn.BatchNorm2d):
