@@ -296,7 +296,6 @@ class ResNet(nn.Module):
             target_channels = self.num_features  # Set the desired number of channels
             adjusted_sk = [self.adjust_channels(tensor, target_channels) for tensor in interpolated_sk]
 
-            print(f"Shapes of tensors in sk at level {i}: {[s.shape for s in adjusted_sk]}")
             # Sum the adjusted tensors
             summed_sk = sum(adjusted_sk)
 
